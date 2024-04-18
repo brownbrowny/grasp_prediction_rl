@@ -1,9 +1,11 @@
 # Virtual Environment
 env_rl/
 
+# large obj files
+point_clouds/meshes/box_with_texture_aligned.obj
+
 # other
 *.zip
-
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

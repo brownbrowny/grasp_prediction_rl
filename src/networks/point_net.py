@@ -1,10 +1,6 @@
-from typing import Dict, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-
-import open3d as o3d
 
 import gymnasium as gym
 
@@ -17,11 +13,18 @@ from stable_baselines3.common.type_aliases import TensorDict
 # Uses the Point Net Backbone to extract features from the input point cloud and then
 # concatenates the features with the pose vector
 class GraspInputExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 1027, debug: bool = False):
+    def __init__(self, observation_space: gym.spaces.Dict, num_points: int=4096, features_dim: int = 1027, debug: bool = False):
      
-        super().__init__(observation_space, features_dim)  # 4096 (pc) + 3 (position vector)
-                
-        self.point_cloud_extractor = PointNetBackbone(num_points=4096, num_global_feats=1024, local_feat=False)
+        super().__init__(observation_space, num_points, features_dim)  # 4096 (pc) + 3 (position vector)
+        
+        num_global_feats = features_dim - 3
+        
+        print(f'features_dim: {features_dim}')
+        print(f'num_points: {num_points}')
+        print(f'num_global_feats: {num_global_feats}')
+        
+        
+        self.point_cloud_extractor = PointNetBackbone(num_points=num_points, num_global_feats=num_global_feats, local_feat=False)
         self.flatten_layer = nn.Flatten()
         self.debug = debug
         
@@ -328,65 +331,3 @@ class PointNetSegHead(nn.Module):
         x = x.transpose(2, 1)
         
         return x, crit_idxs, A_feat
-
-    
-# ============================================================================
-# Test 
-def main():
-    
-    # load numpy array from disk
-    point_cloud_np = np.load('point_clouds/box_point_cloud.npy')
-    print(f'Point Cloud Shape: {point_cloud_np.shape}')
-    # (4096x3)
-    
-    # batch size
-    batch_size = 32
-    
-    # print reshape to (3, 4096) and copy it batch_size times
-    point_cloud = np.transpose(point_cloud_np, (1, 0))
-    point_cloud = np.expand_dims(point_cloud, axis=0)
-    point_cloud_batch = np.repeat(point_cloud, batch_size, axis=0)
-    
-    # pose vector
-    pose_vector = np.array([0.45, 0.48, 0.042])
-    # copy it batch_size times to match point cloud as (32, 3)
-    pose_vector_batch = np.repeat([pose_vector], batch_size, axis=0)
-        
-    # convert both to torch tensors and put into a dictionary
-    test_data = {
-        'point_cloud': torch.tensor(point_cloud_batch, dtype=torch.float32),
-        'pose_vector': torch.tensor(pose_vector_batch, dtype=torch.float32)
-    }
-
-    print(f'point cloud shape: {test_data["point_cloud"].shape}')
-    print(f'pose_vector shape: {test_data["pose_vector"].shape}')
-
-
-    # # Call the model with mock data
-    model = GraspInputExtractor(test_data, debug=True)
-    output_features, indices = model(test_data)
-    print(f'Output Features Shape: {output_features.shape}')
-    print(f'Indices Shape: {indices.shape}')
-    
-    # create a visualization of the original point cloud (needs to be converted to a point cloud)
-    # and the critical points with a different color
-    # Convert indices to a NumPy array if they are not already
-    indices = indices[1, :].numpy()
-
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(point_cloud_np)
-    # Initialize colors for all points. Default color is blue.
-    colors = np.zeros(point_cloud_np.shape)
-    colors[:] = [0, 0, 1]  # Blue
-
-    # Set emphasized points to red
-    colors[indices] = [1, 0, 0]  # Red
-
-    # Assign colors to the point cloud
-    pcd.colors = o3d.utility.Vector3dVector(colors)
-    
-    # Visualize the point cloud
-    o3d.visualization.draw_geometries([pcd])
-    
-if __name__ == '__main__':
-    main()

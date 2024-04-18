@@ -1,10 +1,9 @@
 # Imports
 from stable_baselines3 import PPO, A2C, DQN, DDPG, SAC
-from stable_baselines3.common.vec_env import VecFrameStack
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_checker import check_env
-import gymnasium as gym
 
 import torch
 
@@ -13,6 +12,7 @@ import numpy as np
 
 from src.networks.point_net import GraspInputExtractor
 from src.envs.GraspEnv import GraspEnv
+from src.envs.GraspEnvNoPC import GraspEnvNoPC
 
 import gc
 
@@ -24,15 +24,12 @@ def test_training_loop(env, episodes=5):
     print(env.observation_space.sample())
 
     for episode in range(1, episodes+1):
-        state = env.reset()
-        done = False
-        
-        while not done:
-            action = env.action_space.sample()
-            observation, reward, done, truncated, info = env.step(action)
-            if truncated:
-                break
-        print('Episode:{} Reward:{}'.format(episode, reward))
+        state = env.reset()        
+        action = env.action_space.sample()
+        observation, reward, done, truncated, info = env.step(action)
+        print(f'Episode: {episode} - Reward: {reward}')
+        if truncated or done:
+            break
         
 def model_memory_size(model):
     param_size = 0
@@ -43,51 +40,39 @@ def model_memory_size(model):
         buffer_size += buffer.numel() * buffer.element_size()
     total_size = param_size + buffer_size
     return total_size / (1024 ** 2)  # Convert from bytes to megabytes
-
-def profile_memory(model, input_size):
-    # Create a random input tensor of the specified size
-    input_tensor = torch.randn(input_size).cuda()
-
-    # Forward pass
-    with torch.cuda.memory_stats() as mem_stats:
-        output = model(input_tensor)
-        loss = output.mean()  # assuming a simple operation to compute loss
-        loss.backward()
-
-    # Print memory statistics
-    for stat in ["allocated_bytes.all.peak", "reserved_bytes.all.peak"]:
-        print(f"{stat}: {mem_stats[stat] / (1024 ** 2)} MB")  # Convert bytes to MB
         
         
 # create the environment
-env = GraspEnv()
+env = GraspEnvNoPC()
 
-
-#test_training_loop(env)
+#test_training_loop(env, 20)
 
 log_path = os.path.join('Training', 'Logs')
 
 policy_kwargs = dict(
     features_extractor_class=GraspInputExtractor,
-    features_extractor_kwargs=dict(features_dim=1027),
+    features_extractor_kwargs=dict(num_points=256, features_dim=128),
 )
 
-#envs = gym.make_vec("GraspEnv-v0", num_envs=3)
+env_kwargs = dict(
+    pc_shape=(3, 256)
+)
+
+vec_env = make_vec_env(GraspEnv, n_envs=8, seed=0, env_kwargs=env_kwargs)
 
 #check_env(envs, warn=True)
 
-model = PPO("MultiInputPolicy", env, policy_kwargs=policy_kwargs, verbose=3, tensorboard_log=log_path)
+#model = PPO("MultiInputPolicy", vec_env, policy_kwargs=policy_kwargs, verbose=1, tensorboard_log=log_path)
+
+model = A2C("MultiInputPolicy", vec_env, verbose=1,gamma=0, tensorboard_log=log_path)
 # model.save("test_model")
 
-# #print(model.policy)
+#print(model.policy)
+model.learn(2_000_000, progress_bar=True)
 
-try:
-    model.learn(20000)
-except Exception as e:
-    print(e)
-    print(torch.cuda.memory_summary(device=None, abbreviated=False))
-    
-    model.save("test_model")
-    
-    #print(f"Model memory size: {model_memory_size(model)} MB")
-    profile_memory(model, (1, 3, 4096))  # Adjust input size as needed
+# # try:
+# #     pass
+# #     model.learn(total_timesteps=50_000, progress_bar=True)
+# # except Exception as e:
+# #     print(e)
+# #     print(torch.cuda.memory_summary(device=None, abbreviated=False))
