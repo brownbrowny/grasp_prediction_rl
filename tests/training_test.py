@@ -67,8 +67,8 @@ vec_env = make_vec_env(GraspEnv, n_envs=8, seed=0, env_kwargs=env_kwargs)
 model = A2C("MultiInputPolicy", vec_env, verbose=1,gamma=0, tensorboard_log=log_path)
 # model.save("test_model")
 
-#print(model.policy)
-model.learn(2_000_000, progress_bar=True)
+print(model.policy)
+#model.learn(2_000_000, progress_bar=True)
 
 # # try:
 # #     pass

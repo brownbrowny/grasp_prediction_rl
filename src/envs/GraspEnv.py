@@ -2,37 +2,8 @@
 import gymnasium as gym
 import numpy as np
 
-import os
-
-global point_cloud
-
-# helper functions
-
-# function for loading the point cloud as numpy array and adding a batch dimension
-# by copying the point cloud batch_size times
-def load_point_cloud():
-    # get point cloud from default point_clouds directory relative to working directory
-    cwd = os.getcwd()   
-    absolute_path = os.path.join(cwd, 'point_clouds', 'point_clouds_ready', 'box_point_cloud_256.npy')
-    
-    point_cloud_np = np.load(absolute_path).astype(np.float32)
-    point_cloud_np = np.transpose(point_cloud_np, (1, 0)) # reshape to (3, 4096)
-    
-    # raise error if point cloud is not of shape (3, n)
-    if point_cloud_np.shape[0] != 3:
-        raise ValueError("Invalid shape for point cloud. Expected shape: (3, n), Got shape: {}".format(point_cloud_np.shape))
-    
-    # raise error if point cloud has less than 128 points
-    if point_cloud_np.shape[1] < 128:
-        raise ValueError("Invalid number of points in point cloud. Expected at least 128 points, Got: {}".format(point_cloud_np.shape[1]))
-    
-    # point_cloud = np.expand_dims(point_cloud, axis=0)
-    # point_cloud_batch = np.repeat(point_cloud, batch_size, axis=0)
-    return point_cloud_np
-
-def get_point_cloud():
-    #print(f'Getting point cloud with shape {point_cloud.shape}')
-    return point_cloud
+from src.envs.utils import load_point_cloud, compute_delauny_triangulation
+from src.envs.rewards import reward_check_point_inside_point_cloud, reward_check_distance_to_point_cloud
 
 
 class GraspEnv(gym.Env):
@@ -51,6 +22,8 @@ class GraspEnv(gym.Env):
         
         self.point_cloud = load_point_cloud()
         
+        self.delauny = compute_delauny_triangulation(self.point_cloud)
+        
         self.observation_space = gym.spaces.Dict(
             spaces={
                 "pose_vector": gym.spaces.Box(-1, 1, (self.vector_size,), dtype=np.float32),
@@ -63,8 +36,8 @@ class GraspEnv(gym.Env):
 
         # rewards
         self._distance_to_target = 10
-        self._max_reward = 100
-        self._max_distance = 1.74   # can occur when target is [0, 0, 0] and action [1, 1, 1]
+        self._max_distance_reward = 1
+        self._max_distance = 6   # can occur when target is [-1, -1, -1] and action [1, 1, 1]
         
         self.max_steps = 100
         self.current_step = 0
@@ -92,6 +65,8 @@ class GraspEnv(gym.Env):
         terminated, truncated = False, False
         self.current_step += 1
 
+        ######################################################################
+        # REWARD LOGIC
         # episode is done when distance between agent and target is less than 0.1
         observation = self._get_obs()
         reward, terminated = self.reward(action, observation['pose_vector'])
@@ -102,6 +77,8 @@ class GraspEnv(gym.Env):
         if self.current_step >= self.max_steps:
             truncated = True
             self.current_step = 0
+
+
 
         # cast reward to float
         reward = float(reward)
@@ -124,19 +101,22 @@ class GraspEnv(gym.Env):
         
         observation = self._get_obs()
         info = self._get_info()
+        
+        # compute new delauny triangulation as point cloud might have changed
+        self.delauny = compute_delauny_triangulation(self.point_cloud)
 
         return observation, info
     
     def reward(self, action, target):
-        # Calculate distance between target and action
-        self._distance_to_target = np.abs(np.linalg.norm(target - action, ord=1))
+        total_reward = 0
         
-        # remaps the distance e.g.:
-        # 0m    = 100 - (0 / 1.74) * 100 = 100 --> max reward
-        # 1m    = 100 - (1 / 1.74) * 100 = 100 - 57.47 = 42.53
-        # 1.74m = 100 - (1.74 / 1.74) * 100 = 0 --> min reward
-        reward = self._max_reward - (self._distance_to_target / self._max_distance) * self._max_reward
+        total_reward += reward_check_distance_to_point_cloud(action, target, self._max_distance_reward, self._max_distance)
         
-        # Termination condition
-        terminated = self._distance_to_target < 0.001
-        return reward, terminated
+        # if the action is inside the point cloud, it is not a valid action
+        if reward_check_point_inside_point_cloud(self.delauny, action):
+            total_reward = 0
+        
+        if self._distance_to_target < 0.01:
+            terminated = True
+        
+        return total_reward, terminated
