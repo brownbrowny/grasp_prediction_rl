@@ -11,6 +11,7 @@ import os
 import numpy as np
 
 from src.networks.point_net import GraspInputExtractor
+from src.networks.policy_networks import CustomActorCriticPolicy
 from src.envs.GraspEnv import GraspEnv
 from src.envs.GraspEnvNoPC import GraspEnvNoPC
 
@@ -43,7 +44,7 @@ def model_memory_size(model):
         
         
 # create the environment
-env = GraspEnvNoPC()
+#env = GraspEnvNoPC()
 
 #test_training_loop(env, 20)
 
@@ -51,7 +52,8 @@ log_path = os.path.join('Training', 'Logs')
 
 policy_kwargs = dict(
     features_extractor_class=GraspInputExtractor,
-    features_extractor_kwargs=dict(num_points=256, features_dim=128),
+    features_extractor_kwargs=dict(num_points=4096),
+    # net_arch=dict(pi=[512, 256, 64], vf=[512, 256, 64]),
 )
 
 env_kwargs = dict(
@@ -60,15 +62,15 @@ env_kwargs = dict(
 
 vec_env = make_vec_env(GraspEnv, n_envs=8, seed=0, env_kwargs=env_kwargs)
 
-#check_env(envs, warn=True)
+#check_env(env, warn=True)
 
-#model = PPO("MultiInputPolicy", vec_env, policy_kwargs=policy_kwargs, verbose=1, tensorboard_log=log_path)
+#model = A2C(CustomActorCriticPolicy, vec_env, policy_kwargs=policy_kwargs, gamma=0.95, verbose=1, tensorboard_log=log_path)
 
-model = A2C("MultiInputPolicy", vec_env, verbose=1,gamma=0, tensorboard_log=log_path)
+model = A2C("MultiInputPolicy", vec_env, verbose=1, gamma=0.95, tensorboard_log=log_path)
 # model.save("test_model")
 
 print(model.policy)
-#model.learn(2_000_000, progress_bar=True)
+model.learn(200_000, progress_bar=True)
 
 # # try:
 # #     pass

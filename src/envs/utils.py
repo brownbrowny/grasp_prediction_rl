@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.spatial import Delaunay
 
-def load_point_cloud():
+def load_point_cloud(pc_shape=(3, 256)):
     '''
     Loads a point cloud from a .npy file in the default point_clouds directory relative to the working directory.
     The point cloud is reshaped to (3, n) and validated to ensure it has the correct shape and sufficient points.
@@ -14,7 +14,15 @@ def load_point_cloud():
     :return: np.ndarray of shape (3, n) containing the loaded and validated point cloud.
     '''
     cwd = os.getcwd()   
-    absolute_path = os.path.join(cwd, 'point_clouds', 'point_clouds_ready', 'box_point_cloud_256.npy')
+    
+    if pc_shape[1] == 4096:
+        file_name = 'box_point_cloud_4096.npy'
+    elif pc_shape[1] == 256:
+        file_name = 'box_point_cloud_256.npy'
+    else:
+        raise ValueError("Invalid shape for point cloud. Expected shape: (3, 4096) or (3, 256), Got shape: {}".format(pc_shape))
+    
+    absolute_path = os.path.join(cwd, 'point_clouds', 'point_clouds_ready', file_name)
     
     point_cloud_np = np.load(absolute_path).astype(np.float32)
     point_cloud_np = np.transpose(point_cloud_np, (1, 0)) # reshape to (3, 4096)
@@ -30,6 +38,16 @@ def load_point_cloud():
     # point_cloud = np.expand_dims(point_cloud, axis=0)
     # point_cloud_batch = np.repeat(point_cloud, batch_size, axis=0)
     return point_cloud_np
+
+def translate_point_cloud(point_cloud, translation):
+    '''
+    Translates a point cloud by a given translation vector
+    
+    :param point_cloud: np.ndarray of shape (3, n) containing the point cloud
+    :param translation: np.ndarray of shape (3,) containing the translation vector
+    :return: np.ndarray of shape (3, n) containing the translated point cloud
+    '''
+    return point_cloud + translation[:, np.newaxis]
 
 def compute_delauny_triangulation(point_cloud):
     '''

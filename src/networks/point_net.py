@@ -15,16 +15,12 @@ from stable_baselines3.common.type_aliases import TensorDict
 class GraspInputExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Dict, num_points: int=4096, features_dim: int = 1027, debug: bool = False):
      
-        super().__init__(observation_space, num_points, features_dim)  # 4096 (pc) + 3 (position vector)
-        
-        num_global_feats = features_dim - 3
+        super().__init__(observation_space, features_dim)  # 4096 (pc) + 3 (position vector)
         
         print(f'features_dim: {features_dim}')
         print(f'num_points: {num_points}')
-        print(f'num_global_feats: {num_global_feats}')
         
-        
-        self.point_cloud_extractor = PointNetBackbone(num_points=num_points, num_global_feats=num_global_feats, local_feat=False)
+        self.point_cloud_extractor = PointNetBackbone(num_points=num_points, num_global_feats=1024, local_feat=False)
         self.flatten_layer = nn.Flatten()
         self.debug = debug
         
@@ -54,43 +50,7 @@ class GraspInputExtractor(BaseFeaturesExtractor):
             print(f'point cloud shape: {encoded_tensor_list[0].shape}')
             return torch.cat(encoded_tensor_list, dim=1), critical_indexes
         else:
-            return torch.cat(encoded_tensor_list, dim=1)
-    
-    
-    # @torch.no_grad()
-    # def preprocess(self, observations: TensorDict) -> Tuple[torch.Tensor, torch.Tensor]:
-        
-    #     point_cloud = observations['point_cloud']
-    #     pose_vector = observations['pose_vector']
-        
-    #     # check if the points in x are centered, center it
-    #     centroid = np.mean(point_cloud, axis=1)
-    #     if not np.allclose(centroid, np.zeros(3), atol=1e-6):
-    #         print('Centering Point Cloud!')
-    #         point_cloud -= centroid
-        
-    #     # check if the point cloud is normalized
-    #     norms = np.linalg.norm(point_cloud, axis=1)  # Calculate the Euclidean norm for each point
-    #     max_distance = np.max(norms)
-    #     if not max_distance <= 1:
-    #         print("Normalizing Point Cloud!")
-    #         point_cloud /= max_distance
-            
-            
-    #     # check if pose vector is normalized
-    #     if not np.all((pose_vector >= -1) & (pose_vector <= 1)):
-    #         print("Normalizing Pose Vector!")
-    #         # Calculate the maximum absolute value for scaling
-    #         max_abs_val = np.max(np.abs(pose_vector))
-    #         # Normalize values to the range [-1, 1]
-    #         pose_vector = pose_vector / max_abs_val
-            
-    #     # Convert to PyTorch tensors
-    #     point_cloud = torch.tensor(point_cloud, dtype=torch.float32)
-    #     pose_vector = torch.tensor(pose_vector, dtype=torch.float32)
-        
-    #     return point_cloud, pose_vector
-    
+            return torch.cat(encoded_tensor_list, dim=1)  
 
 
 # ============================================================================
@@ -253,81 +213,38 @@ class PointNetBackbone(nn.Module):
             return global_features, critical_indexes
 
 
-# ============================================================================
-# Classification Head
-class PointNetClassHead(nn.Module):
-    '''' Classification Head '''
-    def __init__(self, num_points=4096, num_global_feats=1024, k=2):
-        super(PointNetClassHead, self).__init__()
+class PointNetMedium(nn.Module):  # actually pointnet
+    def __init__(self, output_dim=256):
+        # NOTE: we require the output dim to be 256, in order to match the pretrained weights
+        super(PointNetMedium, self).__init__()
 
-        # get the backbone (only need global features for classification)
-        self.backbone = PointNetBackbone(num_points, num_global_feats, local_feat=False)
+        print(f'PointNetMedium')
 
-        # MLP for classification
-        self.linear1 = nn.Linear(num_global_feats, 512)
-        self.linear2 = nn.Linear(512, 256)
-        self.linear3 = nn.Linear(256, k)
+        mlp_out_dim = 256
+        self.local_mlp = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.GELU(),
+            nn.Linear(64, 64),
+            nn.GELU(),
+            nn.Linear(64, 128),
+            nn.GELU(),
+            nn.Linear(128, mlp_out_dim),
+        )
+        self.reset_parameters_()
 
-        # batchnorm for the first 2 linear layers
-        self.bn1 = nn.BatchNorm1d(512)
-        self.bn2 = nn.BatchNorm1d(256)
-
-        # The paper states that batch norm was only added to the layer 
-        # before the classication layer, but another version adds dropout  
-        # to the first 2 layers
-        self.dropout = nn.Dropout(p=0.3)
-        
-
-    def forward(self, x):
-        # get global features
-        x, crit_idxs, A_feat = self.backbone(x) 
-
-        x = self.bn1(F.relu(self.linear1(x)))
-        x = self.bn2(F.relu(self.linear2(x)))
-        x = self.dropout(x)
-        x = self.linear3(x)
-
-        # return logits
-        return x, crit_idxs, A_feat
-
-
-# ============================================================================
-# Segmentation Head
-class PointNetSegHead(nn.Module):
-    ''' Segmentation Head '''
-    def __init__(self, num_points=4096, num_global_feats=1024, m=2):
-        super(PointNetSegHead, self).__init__()
-
-        self.num_points = num_points
-        self.m = m
-
-        # get the backbone 
-        self.backbone = PointNetBackbone(num_points, num_global_feats, local_feat=True)
-
-        # shared MLP
-        num_features = num_global_feats + 64 # local and global features
-        self.conv1 = nn.Conv1d(num_features, 512, kernel_size=1)
-        self.conv2 = nn.Conv1d(512, 256, kernel_size=1)
-        self.conv3 = nn.Conv1d(256, 128, kernel_size=1)
-        self.conv4 = nn.Conv1d(128, m, kernel_size=1)
-
-        # batch norms for shared MLP
-        self.bn1 = nn.BatchNorm1d(512)
-        self.bn2 = nn.BatchNorm1d(256)
-        self.bn3 = nn.BatchNorm1d(128)
-
+    def reset_parameters_(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        
-        # get combined features
-        x, crit_idxs, A_feat = self.backbone(x) 
-
-        # pass through shared MLP
-        x = self.bn1(F.relu(self.conv1(x)))
-        x = self.bn2(F.relu(self.conv2(x)))
-        x = self.bn3(F.relu(self.conv3(x)))
-        x = self.conv4(x)
-
-        x = x.transpose(2, 1)
-        
-        return x, crit_idxs, A_feat
+        '''
+        x: [B, N, 3]
+        '''
+        # Local
+        x = self.local_mlp(x)
+        # gloabal max pooling
+        x = torch.max(x, dim=1)[0]
+        return x

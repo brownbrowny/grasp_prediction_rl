@@ -2,7 +2,7 @@
 import gymnasium as gym
 import numpy as np
 
-from src.envs.utils import load_point_cloud, compute_delauny_triangulation
+from src.envs.utils import load_point_cloud, compute_delauny_triangulation, translate_point_cloud
 from src.envs.rewards import reward_check_point_inside_point_cloud, reward_check_distance_to_point_cloud
 
 
@@ -18,11 +18,8 @@ class GraspEnv(gym.Env):
         if pc_shape[0] == 3:
             self.pc_shape = pc_shape
         elif pc_shape[1] == 3:
-            raise ValueError("Invalid shape for point cloud. Expected shape: (3, n), Got shape: {}".format(pc_shape))
-        
-        self.point_cloud = load_point_cloud()
-        
-        self.delauny = compute_delauny_triangulation(self.point_cloud)
+            # swap the shape
+            self.pc_shape = (pc_shape[1], pc_shape[0])
         
         self.observation_space = gym.spaces.Dict(
             spaces={
@@ -46,7 +43,7 @@ class GraspEnv(gym.Env):
     # translates the environment’s state into an observation
     def _get_obs(self):
         return {
-            "pose_vector": [0.45, 0.48, 0.042],
+            "pose_vector": self.pose_vector,
             "point_cloud": self.point_cloud
         }
 
@@ -55,6 +52,16 @@ class GraspEnv(gym.Env):
         return {
             "distance": self._reward_distance
         }
+        
+    def _set_observation(self):
+        '''
+        Set the observation of the environment. This basically imitates a camera or sensor
+        which would retrieve the current state of the environment.
+        '''
+        self.pose_vector = np.random.uniform(-1, 1, self.vector_size)
+        point_cloud_np = load_point_cloud(self.pc_shape)
+        self.point_cloud = translate_point_cloud(point_cloud_np, self.pose_vector)
+        self.delauny = compute_delauny_triangulation(self.point_cloud)
 
     # contains most of the logic of the environment. It accepts an action, 
     # computes the state of the environment after applying that action and 
@@ -65,11 +72,9 @@ class GraspEnv(gym.Env):
         terminated, truncated = False, False
         self.current_step += 1
 
-        ######################################################################
-        # REWARD LOGIC
-        # episode is done when distance between agent and target is less than 0.1
         observation = self._get_obs()
-        reward, terminated = self.reward(action, observation['pose_vector'])
+        
+        reward = self.get_reward(action, observation['pose_vector'])
         
         info = self._get_info()
 
@@ -78,10 +83,12 @@ class GraspEnv(gym.Env):
             truncated = True
             self.current_step = 0
 
-
-
-        # cast reward to float
-        reward = float(reward)
+        if self._distance_to_target < 0.01:
+            terminated = True
+        
+        # check if total_reward is NaN or infinity
+        if np.isnan(reward) or np.isinf(reward):
+            print(f'Reward: {reward}')
         
         # Return step information
         return observation, reward, terminated, truncated, info
@@ -95,6 +102,8 @@ class GraspEnv(gym.Env):
         if seed is not None:
             super().reset(seed=seed)
 
+        self._set_observation()
+        
         # reset step
         self.current_step = 0
         self._reward_distance = 200
@@ -102,12 +111,14 @@ class GraspEnv(gym.Env):
         observation = self._get_obs()
         info = self._get_info()
         
+        self.point_cloud = translate_point_cloud(self.point_cloud, observation['pose_vector'])
+        
         # compute new delauny triangulation as point cloud might have changed
         self.delauny = compute_delauny_triangulation(self.point_cloud)
 
         return observation, info
     
-    def reward(self, action, target):
+    def get_reward(self, action, target):
         total_reward = 0
         
         total_reward += reward_check_distance_to_point_cloud(action, target, self._max_distance_reward, self._max_distance)
@@ -116,7 +127,4 @@ class GraspEnv(gym.Env):
         if reward_check_point_inside_point_cloud(self.delauny, action):
             total_reward = 0
         
-        if self._distance_to_target < 0.01:
-            terminated = True
-        
-        return total_reward, terminated
+        return float(total_reward)
